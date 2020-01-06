@@ -8,29 +8,12 @@
 #include <sys/socket.h>
 
 
-torch::Tensor decode(py::bytes data, std::vector<int> frame_indices) {
-    // This is the actual stand-along(blocking) decode functionality,
-    // which should run in the main process as it requires the GPU.
-    std::cout << "::decode(" << data << ")" << std::endl;
-
-    // Decoding happens here
-    // Note we can infer the size of all the frames from the decoded sequence.
-    // TODO(tzaman): How do you allocate torch shared memory with their C++ API?
-    auto frames = torch::zeros({1, 640, 480, 6}); // [nframes, width, height, channels]
-    return {
-        frames
-    };
-}
-
-
 static const int parentsocket = 0;
 static const int childsocket = 1;
 
 struct packet {
     int n_input_bytes;  // Amount of bytes in the encoded packet
 };
-
-
 
 class TVL {
   public:
@@ -100,14 +83,22 @@ class TVL {
             t.detach();  // Who cares about cleanup.
 
             // Create the named semaphores. These indicate if users have a handle on the system.
-            // TODO(tzaman): just use unnamed semaphores when on UNIX.
+            // TODO(tzaman): just the use unnamed semaphores when on UNIX.
             std::string sem_name = "tvl_sem_" + std::to_string(i);
-            sem_unlink(sem_name.c_str());  // Total hack.
             unsigned int sem_value = 1;
+            sem_unlink(sem_name.c_str());  // Total hack.
             sem_t * sem = sem_open(sem_name.c_str(), O_CREAT | O_EXCL, 0644, sem_value);
             if (sem == SEM_FAILED) {
                 std::cout << "Error creating semaphore=" << sem << std::endl;
             }
+
+            // Unnamed semaphore implementation (for UNIX)
+            // unsigned int sem_value = 1;
+            // sem_t * sem;
+            // if (sem_init(sem, 1, sem_value) == -1) {
+            //     perror("sem_init");
+            // }
+            
             this->semaphores_[i] = sem;
         }
     }
@@ -172,7 +163,9 @@ class TVL {
         int status;
         int n = read(socket, &status, sizeof(int));
 
-        std::cout << "status=" << status << std::endl;
+        if (status) {
+            std::cout << "Error reported by worker, status=" << status << std::endl;
+        }
 
         torch::Tensor output_buffer = this->output_buffers_[handle];
         return output_buffer;
@@ -182,7 +175,6 @@ class TVL {
 
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("decode", &decode, "decode");
     py::class_<TVL>(m, "TVL")
         .def(py::init<int, std::vector<torch::Tensor>, std::vector<torch::Tensor>>())
         .def("get_handle", &TVL::get_handle)

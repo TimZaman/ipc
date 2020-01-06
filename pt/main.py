@@ -8,6 +8,15 @@ print()
 
 
 class TVLHandle:
+    """
+    Each TVL Handle:
+    - Has one worker living in the main process's thread.
+    - Has an unnamed semaphore indicating if anyone is using the handle right now.
+    - Has one unnamed socketpair to communicate between the user and the worker.
+    - Owns one shared memory input buffer (with encoded video data).
+    - Owns one shared memory output buffer (for decoded video data).
+    """
+
     def __init__(self, tvl):
         print('TVLHandle')
         self._tvl = tvl
@@ -33,7 +42,12 @@ class TVLHandle:
 
     def remote_decode(self, data):
         print(f'remote_decode with self.handle={self.handle}')
-        return self._tvl.backend.remote_decode(self.handle, data)
+        # NOTE(tzaman): This output buffer is shared, and can be reused later.
+        # That means that it can be overwritten as soon as the handle is released!
+        # We might simply want to copy it so we own it, or users can have the handle persist
+        # for a very long time (e.g. until batching).
+        output = self._tvl.backend.remote_decode(self.handle, data)
+        return output
 
 
 class TVL:
